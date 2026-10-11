@@ -1,2 +1,2 @@
 # thelifeofjonny
-Zur Erinnerung ein Kondulenzbuch von Jona Gabriel Giese
+Zur Erinnerung ein Kondulenzbuch für unseren Sohn Jona Gabriel Giese
