@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Verwaltung – Gedenkseite Jona</title>
+<meta name="apple-mobile-web-app-title" content="Verwaltung Jona">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+:root{--bg:#fbf4ea;--card:#fffaf3;--text:#3f322a;--muted:#85705f;--accent:#c07a56;--accent2:#a65f3d;--gold:#d9a85b;--line:#ead8c3;--ok:#4a7c59;--bad:#b04a4a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:17px;line-height:1.55;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+h1{font-family:Georgia,serif;font-weight:700;font-size:1.6rem;margin:0 0 4px;color:var(--accent2)}
+.sub{color:var(--muted);margin:0 0 18px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 3px 14px rgba(120,80,40,.08)}
+label{display:block;margin:0 0 4px;color:var(--muted);font-size:.95rem}
+input{width:100%;font:inherit;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-bottom:14px}
+button{font:inherit;font-weight:600;cursor:pointer;border:0;border-radius:10px;padding:11px 16px;background:var(--accent);color:#fff}
+button:hover{background:var(--accent2)}button:disabled{opacity:.5}
+button.ghost{background:#efe3d3;color:var(--text)}button.bad{background:var(--bad)}button.ok{background:var(--ok)}
+.err{color:var(--bad);margin:10px 0 0}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.tabs button{background:#efe3d3;color:var(--text)}
+.tabs button.on{background:var(--accent);color:#fff}
+.msg{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--gold);border-radius:12px;padding:16px;margin-bottom:16px}
+.msg.wait{border-left-color:var(--accent)}.msg.pub{border-left-color:var(--ok)}.msg.priv{border-left-color:#9a8f86}
+.meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:.9rem;margin-bottom:8px}
+.badge{font-size:.82rem;font-weight:700;padding:2px 10px;border-radius:999px;background:#efe3d3}
+.txt{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 12px;font-size:1.05rem}
+.media img,.media video{width:100%;max-height:420px;object-fit:contain;border-radius:10px;background:#000;margin-bottom:10px;display:block}
+.acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.empty{text-align:center;color:var(--muted);padding:30px 10px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Verwaltung · Gedenkseite Jona</h1>
+  <p class="sub">Nur für die Familie. Bitte diesen Link nicht weitergeben.</p>
+
+  <div class="box" id="login">
+    <form id="loginForm">
+      <label for="em">E-Mail</label><input id="em" type="email" autocomplete="username" required>
+      <label for="pw">Passwort</label><input id="pw" type="password" autocomplete="current-password" required>
+      <button type="submit" id="loginBtn">Anmelden</button>
+      <div class="err" id="loginErr"></div>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <div class="bar"><strong id="info"></strong><span><button class="ghost" id="reload">Neu laden</button> <button class="ghost" id="logout">Abmelden</button></span></div>
+    <div class="tabs" id="tabs"></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+/* ===== Deine Supabase-Daten (wie in index.html) ===== */
+const SUPABASE_URL = "https://cnxkrsiogclywkqzwrdg.supabase.co";
+const SUPABASE_KEY = "sb_publishable_hfqN8r4e8hwbOntlLqoJKQ_tdP8jy1W";
+const MEDIA_URL = "https://jona-media.r-giese.workers.dev";   /* Adresse deines Cloudflare-Workers (wie in index.html), ohne "/" am Ende */
+/* ==================================================== */
+
+const $ = id => document.getElementById(id);
+let token = "", rows = [], tab = "wait";
+const TABS = [["wait","Wartet auf Freigabe"],["pub","Veröffentlicht"],["priv","Privat"],["all","Alle"]];
+const kind = m => !m.show_public ? "priv" : (m.approved ? "pub" : "wait");
+const isVideo = u => /\.(mp4|webm)$/i.test(u);
+
+function save(t){ try{ t ? sessionStorage.setItem("jt", t) : sessionStorage.removeItem("jt"); }catch(e){} }
+function logout(msg){
+  token = ""; save(""); rows = [];
+  $("app").hidden = true; $("login").hidden = false;
+  $("loginErr").textContent = msg || "";
+}
+async function api(path, opts = {}){
+  const r = await fetch(SUPABASE_URL + path, {...opts, headers: {apikey: SUPABASE_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", ...(opts.headers || {})}});
+  if(r.status === 401){ logout("Bitte melde dich erneut an."); throw new Error("401"); }
+  return r;
+}
+
+$("loginForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const b = $("loginBtn"); b.disabled = true; $("loginErr").textContent = "";
+  try{
+    const r = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=password", {method: "POST", headers: {apikey: SUPABASE_KEY, "Content-Type": "application/json"},
+      body: JSON.stringify({email: $("em").value.trim().toLowerCase(), password: $("pw").value})});
+    const j = await r.json();
+    if(!r.ok || !j.access_token) throw new Error("login");
+    token = j.access_token; save(token); $("pw").value = "";
+    start();
+  }catch(err){ $("loginErr").textContent = "Anmeldung nicht möglich. Bitte E-Mail und Passwort prüfen."; }
+  b.disabled = false;
+});
+$("logout").onclick = () => logout("");
+$("reload").onclick = () => load();
+
+function start(){ $("login").hidden = true; $("app").hidden = false; load(); }
+
+async function load(){
+  $("list").innerHTML = '<p class="empty">Wird geladen …</p>';
+  try{
+    const r = await api("/rest/v1/messages?select=*&order=created_at.desc&limit=500");
+    rows = await r.json();
+    if(!Array.isArray(rows)) throw new Error("data");
+    render();
+  }catch(e){ if(e.message !== "401") $("list").innerHTML = '<p class="empty">Das Laden hat nicht geklappt. Bitte tippe auf „Neu laden“.</p>'; }
+}
+
+function render(){
+  const cnt = k => rows.filter(m => k === "all" || kind(m) === k).length;
+  $("info").textContent = rows.length + " Nachrichten";
+  $("tabs").innerHTML = "";
+  TABS.forEach(([k, name]) => {
+    const b = document.createElement("button"); b.textContent = name + " (" + cnt(k) + ")";
+    if(k === tab) b.className = "on"; b.onclick = () => { tab = k; render(); };
+    $("tabs").appendChild(b);
+  });
+  const list = $("list"); list.innerHTML = "";
+  const show = rows.filter(m => tab === "all" || kind(m) === tab);
+  if(!show.length){
+    const p = document.createElement("p"); p.className = "empty";
+    p.textContent = rows.length ? "Hier ist nichts." : "Keine Nachrichten gefunden. Falls du sicher bist, dass es welche gibt: Wurde das SQL für die Verwaltung mit deiner E-Mail-Adresse ausgeführt?";
+    list.appendChild(p); return;
+  }
+  show.forEach(m => list.appendChild(card(m)));
+}
+
+function el(tag, cls, text){ const e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; }
+
+function card(m){
+  const k = kind(m), d = el("div", "msg " + k);
+  const meta = el("div", "meta");
+  const who = (m.name || "Anonym") + (m.relationship ? " · " + m.relationship : "");
+  meta.appendChild(el("span", "", who + " · " + new Date(m.created_at).toLocaleString("de-DE", {dateStyle: "medium", timeStyle: "short"})));
+  meta.appendChild(el("span", "badge", k === "wait" ? "Wartet" : k === "pub" ? "Veröffentlicht" : "Nur privat"));
+  d.appendChild(meta);
+  d.appendChild(el("div", "txt", m.message));
+  const files = (m.photos || []).filter(u => u.startsWith(MEDIA_URL) || u.startsWith(SUPABASE_URL));
+  if(files.length){
+    const md = el("div", "media");
+    files.forEach(u => {
+      if(isVideo(u)){ const v = document.createElement("video"); v.src = u; v.poster = u.replace(/\.(mp4|webm)$/i, "_p.jpg"); v.controls = true; v.playsInline = true; v.preload = "none"; md.appendChild(v); }
+      else { const i = document.createElement("img"); i.src = u.replace(/\.jpg$/i, "_t.jpg"); i.onerror = () => { i.onerror = null; i.src = u; }; i.loading = "lazy"; i.alt = "Foto"; md.appendChild(i); }
+    });
+    d.appendChild(md);
+  }
+  const acts = el("div", "acts");
+  if(k === "wait"){ const b = el("button", "ok", "✓ Freigeben"); b.onclick = () => setApproved(m, true, b); acts.appendChild(b); }
+  if(k === "pub"){ const b = el("button", "ghost", "Zurückziehen"); b.onclick = () => setApproved(m, false, b); acts.appendChild(b); }
+  if(k === "priv") acts.appendChild(el("span", "meta", "Privat: wird auf der Seite nie angezeigt."));
+  const del = el("button", "bad", "Löschen"); del.onclick = () => remove(m, del); acts.appendChild(del);
+  d.appendChild(acts);
+  return d;
+}
+
+async function setApproved(m, val, btn){
+  btn.disabled = true;
+  try{
+    const r = await api("/rest/v1/messages?id=eq." + encodeURIComponent(m.id), {method: "PATCH", headers: {Prefer: "return=minimal"}, body: JSON.stringify({approved: val})});
+    if(!r.ok) throw new Error("patch");
+    m.approved = val; render();
+  }catch(e){ btn.disabled = false; if(e.message !== "401") alert("Das hat leider nicht geklappt. Bitte versuche es noch einmal."); }
+}
+
+async function remove(m, btn){
+  if(!confirm("Diese Nachricht endgültig löschen?\nHochgeladene Fotos und Videos werden ebenfalls gelöscht.")) return;
+  btn.disabled = true;
+  try{
+    const r = await api("/rest/v1/messages?id=eq." + encodeURIComponent(m.id), {method: "DELETE", headers: {Prefer: "return=minimal"}});
+    if(!r.ok) throw new Error("del");
+    for(const u of (m.photos || [])){
+      const base = MEDIA_URL + "/f/";
+      const isNew = u.startsWith(base);   /* neu: Cloudflare, alt: Supabase-Speicher */
+      const path = isNew ? u.slice(base.length) : u.split("/storage/v1/object/public/photos/")[1];
+      if(!path) continue;
+      for(const f of new Set([path, path.replace(/\.jpg$/i, "_t.jpg"), path.replace(/\.(mp4|webm)$/i, "_p.jpg")])){
+        if(isNew) await fetch(base + f, {method: "DELETE", headers: {Authorization: "Bearer " + token}}).catch(() => {});
+        else await api("/storage/v1/object/photos/" + f, {method: "DELETE"}).catch(() => {});
+      }
+    }
+    rows = rows.filter(x => x.id !== m.id); render();
+  }catch(e){ btn.disabled = false; if(e.message !== "401") alert("Das Löschen hat leider nicht geklappt."); }
+}
+
+try{ const t = sessionStorage.getItem("jt"); if(t){ token = t; start(); } }catch(e){}
+</script>
+</body>
+</html>
